@@ -92,3 +92,53 @@ coupe le suivi ; `G` ou `f` le reprennent.
 - Le tampon de logs est borné (2 000 lignes) : un conteneur très bavard ne
   sature pas la mémoire.
 - `Ctrl-C` et `SIGTERM` restaurent proprement le terminal.
+
+## Développement
+
+```sh
+git clone https://github.com/<vous>/dsup && cd dsup
+python3 -m venv venv
+source venv/bin/activate          # fish : source venv/bin/activate.fish
+pip install -e ".[dev]"
+```
+
+Deux pièges se cachent dans ces quatre lignes, et ils n'ont rien à voir avec
+`dsup` lui-même.
+
+**L'activation dépend de votre shell.** `venv/bin/activate` est un script POSIX
+shell : fish ne partage pas cette syntaxe et échoue sur `case "$(uname)" in`.
+Le venv livre un script par shell — `activate.fish` pour fish,
+`activate.csh` pour csh/tcsh, `Activate.ps1` pour PowerShell. Chargez celui de
+votre shell, pas l'autre.
+
+**`pip install -e ".[dev]"` n'est pas optionnel.** Installer les seules
+dépendances ne suffit pas : `dsup` est un point d'entrée déclaré dans
+`[project.scripts]`, et l'exécutable `venv/bin/dsup` n'existe qu'une fois le
+paquet lui-même installé. Sans cette étape, le venv est activé, `textual` et
+`docker` sont présents, et pourtant la commande reste introuvable :
+
+```
+(venv) $ dsup
+fish: Unknown command: dsup
+```
+
+Le `-e` installe en mode éditable — un lien vers vos sources, donc vos
+modifications dans `dsup/` sont prises en compte sans réinstaller. Le suffixe
+`[dev]` ajoute pytest et mypy ; sans lui, `python -m pytest` répondra
+`No module named pytest`.
+
+Les fichiers `requirements.txt` et `requirements-dev.txt` reprennent ces mêmes
+dépendances pour les outils qui les attendent, mais `pyproject.toml` reste la
+source de vérité : les trois sont à resynchroniser à la main.
+
+### Vérifier
+
+```sh
+pytest                   # 69 tests, aucun daemon Docker requis
+mypy                     # strict, sur dsup/ et tests/
+dsup --version
+```
+
+La suite de tests n'a besoin d'aucun conteneur : la couche Docker est isolée
+derrière un protocole et les tests injectent une passerelle factice
+(`FakeGateway` dans `tests/conftest.py`).
