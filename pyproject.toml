@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dsup"
+dynamic = ["version"]
+description = "Superviseur de conteneurs Docker dans le terminal — local ou via SSH, sans agent"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["docker", "tui", "terminal", "monitoring", "containers"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "textual>=1.0",
+    "docker>=7.0",
+]
+
+[project.scripts]
+dsup = "dsup.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "mypy>=1.11",
+]
+
+[tool.hatch.version]
+path = "dsup/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dsup"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+files = ["dsup", "tests"]
