@@ -1,0 +1,16 @@
+# Dépendances d'exécution de dsup (Python >= 3.10)
+# Source de vérité : pyproject.toml — garder les deux synchronisés.
+#
+#   pip install -r requirements.txt
+
+# Framework TUI
+textual>=1.0
+
+# Rich est tiré par textual, mais dsup l'importe directement
+# (rich.cells, rich.segment, rich.style) : on le déclare explicitement.
+rich>=13.0
+
+# Client Docker (socket local ou via SSH)
+# Pas d'extra [ssh] : connect() passe use_ssh_client=True et délègue ssh://
+# au binaire ssh du système, donc paramiko est inutile.
+docker>=7.0
