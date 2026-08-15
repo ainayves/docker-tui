@@ -12,6 +12,10 @@ on:
         type: choice
         options: [testpypi, pypi]
 
+# Minimum par défaut ; le travail `diffuser` élève ce droit pour lui seul.
+permissions:
+  contents: read
+
 jobs:
   verifier:
     name: Cohérence du tag
@@ -111,3 +115,50 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.cible == 'testpypi') && 'https://test.pypi.org/legacy/' || '' }}
+
+  diffuser:
+    name: Publication GitHub
+    needs: [verifier, publier]
+    # Uniquement sur tag : une release n'aurait aucun sens pour un essai
+    # TestPyPI, qui ne correspond à aucune version figée du dépôt.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      # Le jeton est en lecture seule par défaut au niveau du workflow ; créer
+      # une release demande l'écriture, accordée ici seulement.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+      - name: Extraire les notes du CHANGELOG
+        id: notes
+        run: |
+          version="${{ needs.verifier.outputs.version }}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { dedans = 1; next }
+            dedans && (/^## \[/ || /^\[[^]]+\]:/) { exit }
+            dedans { lignes[n++] = $0 }
+            END {
+              debut = 0; while (debut < n && lignes[debut] ~ /^[[:space:]]*$/) debut++
+              fin = n - 1; while (fin >= debut && lignes[fin] ~ /^[[:space:]]*$/) fin--
+              for (i = debut; i <= fin; i++) print lignes[i]
+            }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::aucune section [$version] dans CHANGELOG.md"
+            exit 1
+          fi
+          echo "notes extraites pour $version :"
+          cat notes.md
+
+      - name: Créer la release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
