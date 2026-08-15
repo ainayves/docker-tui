@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 [project]
 name = "dsup"
 dynamic = ["version"]
-description = "Superviseur de conteneurs Docker dans le terminal — local ou via SSH, sans agent"
+description = "Docker container supervisor in your terminal — local or over SSH, agentless"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

@@ -3,13 +3,15 @@
 [![CI](https://github.com/ainayves/docker-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/ainayves/docker-tui/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/dsup)](https://pypi.org/project/dsup/)
 [![Python](https://img.shields.io/pypi/pyversions/dsup)](https://pypi.org/project/dsup/)
-[![Licence](https://img.shields.io/pypi/l/dsup)](LICENSE)
+[![License](https://img.shields.io/pypi/l/dsup)](LICENSE)
 
-Surveiller un hôte Docker éparpille l'essentiel sur trois commandes : `docker ps`
-en boucle, `docker stats` qui bloque, `docker logs -f` dans un autre onglet.
-`dsup` réunit tout dans un seul écran de terminal — états, CPU, RAM, ports,
-uptime, logs en direct, actions — avec une seule commande, aucun serveur,
-aucun login, aucune configuration.
+Watching a Docker host scatters the essentials across three commands: `docker
+ps` in a loop, `docker stats` that takes over your terminal, `docker logs -f`
+in yet another tab. `dsup` brings all of it into a single terminal screen —
+states, CPU, memory, ports, uptime, live logs, actions — with one command, no
+server, no login, no configuration.
+
+**And it reaches remote hosts over plain SSH, installing nothing on them.**
 
 ```
 dsup · local                                            maj. 2 s · 7 conteneurs
@@ -26,174 +28,264 @@ dsup · local                                            maj. 2 s · 7 conteneur
 j/k nav  ↵ logs  / filtre  s stop  r rest.  x kill  d rm  ? aide     ● 5 ◌ 1 ✖ 1
 ```
 
+> The interface itself is currently in French, as shown above. Only the
+> documentation is in English. Everything is single-key driven, so the labels
+> rarely get in the way — but you should know before installing.
+
+## Key features
+
+- **Remote hosts over SSH, with nothing installed on them.** Not an agent, not
+  a daemon, not even the `docker` CLI. An SSH account is the only requirement.
+- **One authentication, then silence.** The tunnel opens before the interface
+  takes over the terminal, so SSH can ask for a password — and it survives
+  `dsup`, so the next launches start instantly.
+- **One screen for everything** — state, CPU, memory, ports, uptime, health,
+  restart policy, live logs.
+- **Live logs** with follow mode, in-buffer search, and wrapping, on the
+  selected container.
+- **Actions where you already are** — start, restart, stop, kill, remove. The
+  destructive ones ask for confirmation; the safe ones do not.
+- **A detail panel** opens on the right on terminals of 110 columns or more,
+  with nothing new to learn.
+- **Survives a broken link.** An unreachable daemon degrades the screen and
+  retries on its own instead of crashing.
+- **No configuration.** No server, no login, no config file. Colors are mid
+  ANSI tones and no background is painted, so `dsup` inherits your terminal
+  theme, light or dark.
+
+## Use cases
+
+### Supervise a VPS without installing anything on it
+
+You have SSH access to a server running Docker, and you would rather not
+install an agent, expose port 2375, or add yet another daemon to maintain.
+
+```sh
+dsup root@vps
+```
+
+That is the whole setup. `dsup` forwards the remote Docker socket over SSH and
+talks to it through a local one. **No command runs on the server** — not even
+the `docker` CLI, which the usual approach (`DOCKER_HOST=ssh://…`, built on
+`docker system dial-stdio`) does require there.
+
+Your `~/.ssh/config` applies as-is, so aliases, keys and jump hosts keep
+working:
+
+```
+Host prod
+    HostName 10.0.0.4
+    User admin
+    ProxyJump bastion
+```
+
+```sh
+dsup prod
+```
+
+### Debug a production incident
+
+A container is gone and you do not yet know why. The list shows it at a
+glance — `✖ err 137` is an out-of-memory kill, not a crash:
+
+```
+  ✖ err 137   batch   acme/batch:0.9   —   —
+```
+
+Press `↵` to read its logs, `/` to search the buffer, `r` to restart it. Three
+keystrokes, one screen, no switching between `docker ps`, `docker logs` and a
+second terminal — and the same keys whether the host is local or a VPS on the
+other side of the planet.
+
 ## Installation
 
 ```sh
 pipx install dsup
-# ou
+# or
 uv tool install dsup
 ```
 
-Python 3.10+. Les couleurs sont des tons ANSI moyens, lisibles sur thème clair
-comme sombre ; aucun fond n'est peint, `dsup` hérite du thème du terminal.
+Python 3.10+. Linux and macOS. Windows is not supported: the SSH tunnel relies
+on a local Unix socket, which does not exist there.
 
 ## Usage
 
-**En local** — `dsup` parle au socket Docker de la machine :
+### Local
+
+`dsup` talks to the machine's Docker socket:
 
 ```sh
-dsup                     # conteneurs en marche, rafraîchis toutes les 2 s
-dsup --all               # inclut les conteneurs arrêtés
-dsup --refresh 5         # rythme de rafraîchissement
-dsup --filter api        # filtre initial sur le nom ou l'image
+dsup                     # running containers, refreshed every 2s
+dsup --all               # include stopped containers
+dsup --refresh 5         # refresh interval
+dsup --filter api        # initial filter on name or image
 ```
 
-**En remote** — passez l'hôte en argument :
+### Remote, over SSH
+
+Pass the host as an argument:
 
 ```sh
-dsup admin@prod-eu-1     # user@hôte
-dsup prod-eu-1           # ou un alias ~/.ssh/config
+dsup admin@prod-eu-1     # user@host
+dsup prod-eu-1           # or a ~/.ssh/config alias
 dsup --disconnect prod-eu-1
 ```
 
-**Rien n'est installé ni même exécuté sur le serveur.** `dsup` ouvre un tunnel
-SSH vers la socket Docker distante et lui parle à travers une socket locale :
+#### Nothing runs on the server
+
+`dsup` opens an SSH tunnel to the remote Docker socket and talks to it through
+a local one:
 
 ```
 ssh -fN -L ~/.dsup/<id>.sock:/var/run/docker.sock prod-eu-1
 ```
 
-Aucune commande ne tourne en face — pas même le CLI `docker`, que la méthode
-habituelle (`DOCKER_HOST=ssh://…`, qui repose sur `docker system dial-stdio`)
-exige pourtant sur le serveur. Votre `~/.ssh/config` s'applique tel quel :
-alias, clés, jump hosts.
+Note the `-N`: no remote command. This is what sets it apart from
+`DOCKER_HOST=ssh://…`, which executes `docker system dial-stdio` on the far
+end and therefore needs the Docker CLI installed there. Here, the socket is
+all that is touched.
 
-**Le mot de passe n'est demandé qu'une fois.** Le tunnel s'ouvre avant que
-l'interface ne prenne le terminal, donc `ssh` peut réclamer un mot de passe,
-une passphrase ou la confirmation d'un hôte inconnu — et vous pouvez répondre,
-sans limite de temps. Le tunnel survit ensuite à `dsup` : les lancements
-suivants démarrent instantanément, sans rien demander, jusqu'à
-`dsup --disconnect`. Une clé (`ssh-copy-id admin@prod-eu-1`) supprime la
-question définitivement.
+It also removes a limit you would hit later: docker-py caps its SSH connection
+pool at 9, against 25 over a Unix socket. Log and stats streams eat through
+nine quickly on a busy host.
 
-Une fois l'interface lancée, plus aucune connexion ne peut poser de question :
-les reconnexions automatiques passent en `BatchMode` et échouent proprement
-plutôt que de réclamer un mot de passe par-dessus l'affichage.
+#### You type your password once
 
-Docker rootless expose sa socket ailleurs :
-`dsup prod-eu-1 --remote-socket /run/user/1000/docker.sock`.
+The tunnel opens *before* the interface takes over the terminal. SSH can
+therefore ask for a password, a key passphrase, or confirmation of an unknown
+host — and you can answer, with no time limit.
 
-> **Sécurité** — la socket locale donne un accès complet au daemon distant,
-> équivalent à root sur ce serveur. `~/.dsup/` est donc créé en `0700`.
-
-Sur un terminal d'au moins 110 colonnes, un panneau détail s'ouvre à droite
-(id, image, santé, politique de restart, RAM utilisée / limite, fil de logs) —
-rien de nouveau à apprendre, tout devient simplement visible sans `↵`.
-
-## Raccourcis
-
-| Touche | Écran principal | | Touche | Écran logs |
-|---|---|---|---|---|
-| `j` / `k` | ligne suivante / précédente (ou `↓`/`↑`) | | `j` / `k` | défiler |
-| `g` / `G` | début / fin de liste | | `g` / `G` | début / fin (G reprend le suivi) |
-| `/` | filtrer par nom ou image · `Esc` efface | | `/` | chercher dans le tampon |
-| `↵` | logs du conteneur sélectionné | | `n` / `N` | résultat suivant / précédent |
-| `S` | start *(sans confirmation)* | | `f` | suivi temps réel on/off |
-| `r` | restart *(sans confirmation)* | | `w` | retour à la ligne on/off |
-| `s` | stop — bandeau `y` confirme | | `↵` / `q` | retour |
-| `x` | kill — bandeau `y` confirme | | | |
-| `d` | rm — bandeau `y` confirme | | | |
-| `R` | rafraîchir / réessayer maintenant | | | |
-| `?` | rappel des touches secondaires | | | |
-| `q` | quitter | | | |
-
-Les actions destructives (`s`, `x`, `d`) affichent un bandeau rouge inversé :
-`y` confirme, toute autre touche annule. Défiler vers le haut dans les logs
-coupe le suivi ; `G` ou `f` le reprennent.
-
-## Comportement à savoir
-
-- La liste s'affiche immédiatement ; CPU et RAM se remplissent au fur et à
-  mesure (le premier relevé CPU affiche `—`, le calcul se fait en delta).
-- Daemon injoignable ou connexion perdue : l'écran passe en état dégradé et
-  réessaie automatiquement toutes les 5 s (`R` force l'essai).
-- Le tampon de logs est borné (2 000 lignes) : un conteneur très bavard ne
-  sature pas la mémoire.
-- `Ctrl-C` et `SIGTERM` restaurent proprement le terminal.
-
-## Développement
+The tunnel then outlives `dsup`. Quit, relaunch, and it starts immediately
+with nothing to type, until you run `--disconnect`. A key removes the question
+for good:
 
 ```sh
-git clone https://github.com/<vous>/dsup && cd dsup
+ssh-copy-id admin@prod-eu-1
+```
+
+Once the interface is running, no connection can ask anything: automatic
+reconnections use `BatchMode` and fail cleanly rather than demanding a
+password over your display.
+
+#### Rootless Docker
+
+The socket lives elsewhere:
+
+```sh
+dsup prod-eu-1 --remote-socket /run/user/1000/docker.sock
+```
+
+> **Security** — the local socket grants full control of the remote daemon,
+> which is equivalent to root on that server. `~/.dsup/` is created with `0700`
+> permissions for that reason. This is also why an SSH tunnel is the minimum
+> acceptable exposure, and why port 2375 should never be open.
+
+## Keyboard shortcuts
+
+| Key | Main screen | | Key | Logs screen |
+|---|---|---|---|---|
+| `j` / `k` | next / previous row (or `↓`/`↑`) | | `j` / `k` | scroll |
+| `g` / `G` | top / bottom of list | | `g` / `G` | top / bottom (G resumes follow) |
+| `/` | filter by name or image · `Esc` clears | | `/` | search the buffer |
+| `↵` | logs for the selected container | | `n` / `N` | next / previous match |
+| `S` | start *(no confirmation)* | | `f` | toggle live follow |
+| `r` | restart *(no confirmation)* | | `w` | toggle line wrapping |
+| `s` | stop — `y` confirms | | `↵` / `q` | back |
+| `x` | kill — `y` confirms | | | |
+| `d` | rm — `y` confirms | | | |
+| `R` | refresh / retry now | | | |
+| `?` | show secondary keys | | | |
+| `q` | quit | | | |
+
+Destructive actions (`s`, `x`, `d`) show an inverted red banner: `y` confirms,
+any other key cancels. Scrolling up in the logs stops the follow; `G` or `f`
+resume it.
+
+## Behavior worth knowing
+
+- The list appears immediately; CPU and memory fill in as readings arrive (the
+  first CPU sample shows `—`, since the value is a delta between two points).
+- Unreachable daemon or lost connection: the screen degrades and retries every
+  5s on its own (`R` forces an attempt).
+- The log buffer is capped at 2,000 lines, so a very chatty container cannot
+  exhaust memory.
+- `Ctrl-C` and `SIGTERM` restore the terminal cleanly.
+
+## Development
+
+```sh
+git clone https://github.com/ainayves/docker-tui && cd docker-tui
 python3 -m venv venv
-source venv/bin/activate          # fish : source venv/bin/activate.fish
+source venv/bin/activate          # fish: source venv/bin/activate.fish
 pip install -e ".[dev]"
 ```
 
-Deux pièges se cachent dans ces quatre lignes, et ils n'ont rien à voir avec
-`dsup` lui-même.
+Two traps hide in those four lines, and neither has anything to do with `dsup`
+itself.
 
-**L'activation dépend de votre shell.** `venv/bin/activate` est un script POSIX
-shell : fish ne partage pas cette syntaxe et échoue sur `case "$(uname)" in`.
-Le venv livre un script par shell — `activate.fish` pour fish,
-`activate.csh` pour csh/tcsh, `Activate.ps1` pour PowerShell. Chargez celui de
-votre shell, pas l'autre.
+**Activation depends on your shell.** `venv/bin/activate` is a POSIX shell
+script: fish does not share that syntax and fails on `case "$(uname)" in`. The
+venv ships one script per shell — `activate.fish` for fish, `activate.csh` for
+csh/tcsh, `Activate.ps1` for PowerShell. Source the one for your shell.
 
-**`pip install -e ".[dev]"` n'est pas optionnel.** Installer les seules
-dépendances ne suffit pas : `dsup` est un point d'entrée déclaré dans
-`[project.scripts]`, et l'exécutable `venv/bin/dsup` n'existe qu'une fois le
-paquet lui-même installé. Sans cette étape, le venv est activé, `textual` et
-`docker` sont présents, et pourtant la commande reste introuvable :
+**`pip install -e ".[dev]"` is not optional.** Installing the dependencies
+alone is not enough: `dsup` is an entry point declared in `[project.scripts]`,
+and the `venv/bin/dsup` executable only exists once the package itself is
+installed. Skip that step and the venv is active, `textual` and `docker` are
+present, yet the command is nowhere to be found:
 
 ```
 (venv) $ dsup
 fish: Unknown command: dsup
 ```
 
-Le `-e` installe en mode éditable — un lien vers vos sources, donc vos
-modifications dans `dsup/` sont prises en compte sans réinstaller. Le suffixe
-`[dev]` ajoute pytest et mypy ; sans lui, `python -m pytest` répondra
-`No module named pytest`.
+The `-e` installs in editable mode — a link to your sources, so changes under
+`dsup/` take effect without reinstalling. The `[dev]` suffix adds pytest and
+mypy; without it, `python -m pytest` answers `No module named pytest`.
 
-Les fichiers `requirements.txt` et `requirements-dev.txt` reprennent ces mêmes
-dépendances pour les outils qui les attendent, mais `pyproject.toml` reste la
-source de vérité : les trois sont à resynchroniser à la main.
+`requirements.txt` and `requirements-dev.txt` restate the same dependencies for
+tools that expect them, but `pyproject.toml` remains the source of truth: all
+three are kept in sync by hand.
 
-### Vérifier
+### Verifying
 
 ```sh
-pytest                   # aucun daemon Docker, aucun accès réseau
-mypy                     # strict, sur dsup/ et tests/
+pytest                   # no Docker daemon, no network access
+mypy                     # strict, over dsup/ and tests/
 dsup --version
 ```
 
-La suite de tests n'a besoin d'aucun conteneur : la couche Docker est isolée
-derrière un protocole et les tests injectent une passerelle factice
-(`FakeGateway` dans `tests/conftest.py`). `subprocess.run` est remplacé partout
-où `dsup/tunnel.py` lance `ssh`. Une suite qui dépasse quelques secondes
-signale donc qu'un test tente une vraie connexion — c'est le symptôme à
-surveiller en ajoutant des tests ici.
+The test suite needs no containers: the Docker layer sits behind a protocol and
+the tests inject a fake gateway (`FakeGateway` in `tests/conftest.py`).
+`subprocess.run` is replaced everywhere `dsup/tunnel.py` shells out to `ssh`.
+A suite that takes more than a few seconds is therefore a signal that some test
+is attempting a real connection — watch for it when adding tests here.
 
-La CI rejoue tout cela sur Python 3.10 à 3.13, plus macOS, et vérifie en outre
-le point d'entrée (`dsup --version`) que la suite n'exerce jamais puisqu'elle
-importe `main()` directement.
+CI replays all of it on Python 3.10 through 3.13 plus macOS, and additionally
+checks the entry point (`dsup --version`), which the suite never exercises
+since it imports `main()` directly.
 
-### Publier une version
+### Releasing
 
-La version est écrite **à un seul endroit**, `dsup/__init__.py` : hatch l'y
-lit, et la CI refuse de publier si le tag ne lui correspond pas. C'est le
-garde-fou qui compte, car un numéro de version consommé sur PyPI ne peut
-jamais être réutilisé.
+The version lives in **exactly one place**, `dsup/__init__.py`: hatch reads it
+from there, and CI refuses to publish when the tag does not match. That is the
+guard that matters, because a version number consumed on PyPI can never be
+reused.
 
 ```sh
-# 1. modifier __version__ dans dsup/__init__.py
-# 2. ajouter l'entrée correspondante dans CHANGELOG.md
+# 1. bump __version__ in dsup/__init__.py
+# 2. add the matching entry to CHANGELOG.md
 git commit -am "version 0.2.0"
+git push origin master        # code only, CI only
 git tag v0.2.0
-git push origin master --tags
+git push origin v0.2.0        # this is what publishes
 ```
 
-Le tag déclenche `release.yml`, qui rejoue mypy et les tests, construit, puis
-publie. Pour un essai sans conséquence, lancer le même workflow à la main en
-choisissant `testpypi` — c'est la seule répétition possible avant le premier
-envoi réel.
+The tag triggers `release.yml`, which replays mypy and the tests, builds,
+publishes to PyPI, then creates a GitHub Release with the notes taken from the
+changelog. For a consequence-free rehearsal, run the same workflow manually and
+pick `testpypi` — the only dry run available before the first real upload.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
