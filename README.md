@@ -43,20 +43,43 @@ dsup --refresh 5         # rythme de rafraîchissement
 dsup --filter api        # filtre initial sur le nom ou l'image
 ```
 
-**En remote** — deux façons, toujours sans agent ni serveur :
+**En remote** — passez l'hôte en argument :
 
 ```sh
-# dsup est installé sur le serveur : on s'y connecte et on le lance
-ssh prod-eu-1
-dsup
-
-# ou dsup tourne en local et parle au daemon distant à travers SSH
-DOCKER_HOST=ssh://admin@prod-eu-1 dsup
+dsup admin@prod-eu-1     # user@hôte
+dsup prod-eu-1           # ou un alias ~/.ssh/config
+dsup --disconnect prod-eu-1
 ```
 
-La seconde forme n'installe rien sur la machine distante : `dsup` délègue le
-transport au binaire `ssh` du système, donc votre `~/.ssh/config` (alias,
-clés, jump hosts) s'applique tel quel.
+**Rien n'est installé ni même exécuté sur le serveur.** `dsup` ouvre un tunnel
+SSH vers la socket Docker distante et lui parle à travers une socket locale :
+
+```
+ssh -fN -L ~/.dsup/<id>.sock:/var/run/docker.sock prod-eu-1
+```
+
+Aucune commande ne tourne en face — pas même le CLI `docker`, que la méthode
+habituelle (`DOCKER_HOST=ssh://…`, qui repose sur `docker system dial-stdio`)
+exige pourtant sur le serveur. Votre `~/.ssh/config` s'applique tel quel :
+alias, clés, jump hosts.
+
+**Le mot de passe n'est demandé qu'une fois.** Le tunnel s'ouvre avant que
+l'interface ne prenne le terminal, donc `ssh` peut réclamer un mot de passe,
+une passphrase ou la confirmation d'un hôte inconnu — et vous pouvez répondre,
+sans limite de temps. Le tunnel survit ensuite à `dsup` : les lancements
+suivants démarrent instantanément, sans rien demander, jusqu'à
+`dsup --disconnect`. Une clé (`ssh-copy-id admin@prod-eu-1`) supprime la
+question définitivement.
+
+Une fois l'interface lancée, plus aucune connexion ne peut poser de question :
+les reconnexions automatiques passent en `BatchMode` et échouent proprement
+plutôt que de réclamer un mot de passe par-dessus l'affichage.
+
+Docker rootless expose sa socket ailleurs :
+`dsup prod-eu-1 --remote-socket /run/user/1000/docker.sock`.
+
+> **Sécurité** — la socket locale donne un accès complet au daemon distant,
+> équivalent à root sur ce serveur. `~/.dsup/` est donc créé en `0700`.
 
 Sur un terminal d'au moins 110 colonnes, un panneau détail s'ouvre à droite
 (id, image, santé, politique de restart, RAM utilisée / limite, fil de logs) —
@@ -134,11 +157,14 @@ source de vérité : les trois sont à resynchroniser à la main.
 ### Vérifier
 
 ```sh
-pytest                   # 69 tests, aucun daemon Docker requis
+pytest                   # aucun daemon Docker, aucun accès réseau
 mypy                     # strict, sur dsup/ et tests/
 dsup --version
 ```
 
 La suite de tests n'a besoin d'aucun conteneur : la couche Docker est isolée
 derrière un protocole et les tests injectent une passerelle factice
-(`FakeGateway` dans `tests/conftest.py`).
+(`FakeGateway` dans `tests/conftest.py`). `subprocess.run` est remplacé partout
+où `dsup/tunnel.py` lance `ssh`. Une suite qui dépasse quelques secondes
+signale donc qu'un test tente une vraie connexion — c'est le symptôme à
+surveiller en ajoutant des tests ici.

@@ -10,7 +10,10 @@ textual>=1.0
 # (rich.cells, rich.segment, rich.style) : on le déclare explicitement.
 rich>=13.0
 
-# Client Docker (socket local ou via SSH)
-# Pas d'extra [ssh] : connect() passe use_ssh_client=True et délègue ssh://
-# au binaire ssh du système, donc paramiko est inutile.
-docker>=7.0
+# Client Docker (socket local, ou distant à travers le tunnel SSH de dsup)
+# L'extra [ssh] tire paramiko. Contre-intuitif mais nécessaire, même si dsup
+# ne s'en sert jamais : docker/transport/sshconn.py l'importe au niveau
+# module, et transport/__init__.py avale l'ImportError. Sans paramiko,
+# SSHHTTPAdapter n'existe pas et un DOCKER_HOST=ssh:// posé à la main échoue
+# sur « Install paramiko package to enable ssh:// support ».
+docker[ssh]>=7.0

@@ -167,14 +167,19 @@ class DsupApp(App[None]):
         refresh: float = 2.0,
         show_all: bool = False,
         initial_filter: str = "",
+        gateway: DockerGateway | None = None,
     ) -> None:
         super().__init__()
         self._gateway_factory = gateway_factory
-        self.gateway: DockerGateway | None = None
+        # Passerelle déjà ouverte par la CLI avant que le terminal ne bascule
+        # (voir cli.main) : `_poll_loop` la réutilise au lieu d'appeler la
+        # fabrique, ce qui évite d'authentifier SSH sous l'interface. None
+        # reste le cas normal, la fabrique prend alors le relais.
+        self.gateway: DockerGateway | None = gateway
         self.refresh_seconds = max(0.5, refresh)
         self.show_all = show_all
         self.filter_text = initial_filter
-        self.context = context_label_from_env()
+        self.context = gateway.context_label() if gateway else context_label_from_env()
         self.containers: dict[str, ContainerInfo] = {}
         self.stats: dict[str, ContainerStats] = {}
         self.pending: dict[str, str] = {}

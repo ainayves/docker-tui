@@ -17,7 +17,11 @@ classifiers = [
 ]
 dependencies = [
     "textual>=1.0",
-    "docker>=7.0",
+    # L'extra [ssh] (paramiko) reste requis alors même que dsup passe par un
+    # tunnel : docker/transport/sshconn.py importe paramiko au niveau module,
+    # et sans lui SSHHTTPAdapter n'est jamais défini — un DOCKER_HOST=ssh://
+    # posé à la main échouerait sur « Install paramiko package ».
+    "docker[ssh]>=7.0",
 ]
 
 [project.scripts]
