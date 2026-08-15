@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Une nouvelle poussée annule la vérification en cours sur la même branche.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # macOS n'est pas décoratif : c'est la plateforme de développement,
+          # et surtout celle dont la limite de longueur des sockets Unix est la
+          # plus basse (~104 caractères). Une régression sur tunnel.socket_path
+          # s'y verrait avant d'atteindre les utilisateurs.
+          - os: macos-latest
+            python: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Installer le paquet et ses outils
+        run: pip install -e ".[dev]"
+
+      - name: Typage strict
+        run: mypy
+
+      - name: Tests
+        # La suite ne touche ni au réseau ni à un daemon Docker : elle doit
+        # rester de l'ordre de quelques secondes. Une durée qui explose
+        # signalerait un test tentant une vraie connexion ssh.
+        run: pytest -q
+
+      - name: Test de fumée du point d'entrée
+        # Vérifie [project.scripts], que la suite n'exerce jamais puisqu'elle
+        # importe main() directement. C'est le genre de rupture qui ne se voit
+        # qu'après publication.
+        run: |
+          dsup --version
+          dsup --help
+
+  package:
+    name: Empaquetage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Construire
+        run: |
+          pip install build twine
+          python -m build
+
+      - name: Valider la fiche PyPI
+        run: twine check dist/*
+
+      - name: Vérifier le contenu de la roue
+        # py.typed absent = annotations ignorées chez les utilisateurs, sans
+        # aucun message d'erreur. tests/ présent = paquet pollué. Deux fautes
+        # silencieuses, donc vérifiées ici.
+        run: |
+          python -m zipfile -l dist/*.whl
+          python -m zipfile -l dist/*.whl | grep -q 'dsup/py.typed'
+          if python -m zipfile -l dist/*.whl | grep -qE '^tests/'; then
+            echo "::error::tests/ ne doit pas être empaqueté"
+            exit 1
+          fi

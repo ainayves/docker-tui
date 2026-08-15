@@ -1,5 +1,10 @@
 # dsup
 
+[![CI](https://github.com/ainayves/docker-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/ainayves/docker-tui/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/dsup)](https://pypi.org/project/dsup/)
+[![Python](https://img.shields.io/pypi/pyversions/dsup)](https://pypi.org/project/dsup/)
+[![Licence](https://img.shields.io/pypi/l/dsup)](LICENSE)
+
 Surveiller un hôte Docker éparpille l'essentiel sur trois commandes : `docker ps`
 en boucle, `docker stats` qui bloque, `docker logs -f` dans un autre onglet.
 `dsup` réunit tout dans un seul écran de terminal — états, CPU, RAM, ports,
@@ -168,3 +173,27 @@ derrière un protocole et les tests injectent une passerelle factice
 où `dsup/tunnel.py` lance `ssh`. Une suite qui dépasse quelques secondes
 signale donc qu'un test tente une vraie connexion — c'est le symptôme à
 surveiller en ajoutant des tests ici.
+
+La CI rejoue tout cela sur Python 3.10 à 3.13, plus macOS, et vérifie en outre
+le point d'entrée (`dsup --version`) que la suite n'exerce jamais puisqu'elle
+importe `main()` directement.
+
+### Publier une version
+
+La version est écrite **à un seul endroit**, `dsup/__init__.py` : hatch l'y
+lit, et la CI refuse de publier si le tag ne lui correspond pas. C'est le
+garde-fou qui compte, car un numéro de version consommé sur PyPI ne peut
+jamais être réutilisé.
+
+```sh
+# 1. modifier __version__ dans dsup/__init__.py
+# 2. ajouter l'entrée correspondante dans CHANGELOG.md
+git commit -am "version 0.2.0"
+git tag v0.2.0
+git push origin master --tags
+```
+
+Le tag déclenche `release.yml`, qui rejoue mypy et les tests, construit, puis
+publie. Pour un essai sans conséquence, lancer le même workflow à la main en
+choisissant `testpypi` — c'est la seule répétition possible avant le premier
+envoi réel.

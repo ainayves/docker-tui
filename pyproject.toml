@@ -1,5 +1,6 @@
 [build-system]
-requires = ["hatchling"]
+# >=1.27 pour la licence en forme SPDX (PEP 639) utilisée ci-dessous.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,12 +9,30 @@ dynamic = ["version"]
 description = "Superviseur de conteneurs Docker dans le terminal — local ou via SSH, sans agent"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Yves Randrianaina", email = "yves@etalik.com" }]
 keywords = ["docker", "tui", "terminal", "monitoring", "containers"]
+# Pas de classificateur « License :: OSI Approved » : depuis la PEP 639,
+# déclarer la licence à la fois par `license` et par un classificateur est une
+# erreur de construction, pas un doublon inoffensif.
+#
+# Windows est volontairement absent : le tunnel de dsup/tunnel.py repose sur
+# une socket Unix locale, qui n'y existe pas. Mieux vaut une fiche honnête
+# qu'un rapport de bug.
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: System Administrators",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
 ]
 dependencies = [
     "textual>=1.0",
@@ -23,6 +42,12 @@ dependencies = [
     # posé à la main échouerait sur « Install paramiko package ».
     "docker[ssh]>=7.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ainayves/docker-tui"
+Repository = "https://github.com/ainayves/docker-tui"
+Issues = "https://github.com/ainayves/docker-tui/issues"
+Changelog = "https://github.com/ainayves/docker-tui/blob/master/CHANGELOG.md"
 
 [project.scripts]
 dsup = "dsup.cli:main"
