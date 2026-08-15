@@ -5,6 +5,25 @@ versionnage [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [0.1.1] — 2026-08-15
+
+Version de documentation : le code n'est pas modifié.
+
+### Modifié
+
+- README réécrit en anglais, avec deux sections nouvelles — *Key features* et
+  *Use cases* — et le tunnel SSH mis en avant : rien n'est installé ni exécuté
+  sur le serveur, pas même le CLI `docker`.
+- Résumé du paquet traduit en anglais, pour s'accorder à la fiche PyPI.
+
+### Corrigé
+
+- Adresse de clonage : l'espace réservé `github.com/<vous>/dsup` pointe
+  désormais sur le vrai dépôt.
+- Procédure de publication : `git push origin master --tags` poussait code et
+  tags d'un seul geste, donc publiait sans le vouloir. Les deux gestes sont
+  séparés.
+
 ## [0.1.0] — 2026-08-15
 
 Première version publiée.
@@ -33,5 +52,6 @@ Première version publiée.
 - Les reconnexions automatiques passent en `BatchMode`, donc aucune invite SSH
   ne peut surgir pendant que l'interface occupe le terminal.
 
-[Non publié]: https://github.com/ainayves/docker-tui/compare/v0.1.0...HEAD
+[Non publié]: https://github.com/ainayves/docker-tui/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ainayves/docker-tui/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ainayves/docker-tui/releases/tag/v0.1.0
