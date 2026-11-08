@@ -24,7 +24,7 @@ from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.timer import Timer
 
-from dsup import theme
+from dsup import clipboard, theme
 from dsup.docker import (
     ContainerGone,
     ContainerInfo,
@@ -45,6 +45,7 @@ RETRY_DELAY_S = 5.0
 LOG_TAIL = 500
 DETAIL_LOG_TAIL = 100
 FLASH_DURATION_S = 4.0
+COPY_FLASH_S = 2.5
 WIDE_LAYOUT_MIN_COLS = 110
 
 ConnState = Literal["connecting", "ok", "down"]
@@ -72,12 +73,18 @@ _HELP_KEYS: list[tuple[str, str]] = [
 ]
 _DOWN_KEYS: list[tuple[str, str]] = [("R", "réessayer"), ("q", "quitter")]
 _LOGS_KEYS: list[tuple[str, str]] = [
-    ("j/k", "défiler"),
-    ("g/G", "début/fin"),
+    ("j/k g/G", "défiler"),
     ("/", "chercher"),
     ("f", "suivi"),
     ("w", "wrap"),
+    ("v", "copier"),
     ("↵/q", "retour"),
+]
+_SELECT_KEYS: list[tuple[str, str]] = [
+    ("j/k g/G", "étendre"),
+    ("a", "tout"),
+    ("y/↵", "copier"),
+    ("Esc", "annuler"),
 ]
 
 
@@ -728,16 +735,24 @@ class MainScreen(Screen[None]):
 
 
 class LogsScreen(Screen[None]):
-    """Sous-écran logs : suivi temps réel, recherche dans le tampon, wrap."""
+    """Sous-écran logs : suivi temps réel, recherche, wrap, copie de lignes.
+
+    La copie passe par un mode sélection au clavier (`v`) plutôt que par la
+    souris : une sélection du terminal ne prendrait que l'écran visible, et
+    des lignes tronquées quand le wrap est coupé. Ici les lignes copiées sont
+    entières, sur tout le tampon.
+    """
 
     def __init__(self, info: ContainerInfo) -> None:
         super().__init__()
         self._info = info
         self._buffer = LogBuffer(2000)
         self._streamer: LogStreamer | None = None
-        self._mode: Literal["normal", "search"] = "normal"
+        self._mode: Literal["normal", "search", "select"] = "normal"
         self._search_text = ""
         self._note: str | None = None
+        self._flash_active = False
+        self._flash_timer: Timer | None = None
 
     @property
     def dsup(self) -> DsupApp:
@@ -797,7 +812,17 @@ class LogsScreen(Screen[None]):
         top_right.append((f"{count} ligne{'s' if count > 1 else ''}", theme.S_FAINT))
         self.query_one(TopBar).set_content(top_left, top_right)
 
+        if self._flash_active:
+            return
         bar = self.query_one(BottomBar)
+        if self._mode == "select":
+            size = view.selection_size
+            bar.show_keys(
+                _SELECT_KEYS,
+                right=[(f"{size} ligne{'s' if size > 1 else ''}", theme.TEXT)],
+                prefix=[("sélection", theme.S_BLUE + theme.S_BOLD), ("  ", theme.TEXT)],
+            )
+            return
         current = self.dsup.containers.get(self._info.id, self._info)
         state_text, state_style = theme.state_display(current.state, current.exit_code)
         right: list[Piece] = [
@@ -813,13 +838,20 @@ class LogsScreen(Screen[None]):
             return
         keys = list(_LOGS_KEYS)
         if self._search_text:
-            keys.insert(3, ("n/N", "suivant/préc."))
+            keys.insert(2, ("n/N", "suivant/préc."))
         bar.show_keys(keys, right=right)
 
     def on_key(self, event: events.Key) -> None:
         view = self.query_one(LogView)
         char = event.character
         key = event.key
+        if self._flash_active:
+            self._end_flash()
+        if self._mode == "select":
+            self._handle_select_key(view, key, char)
+            self.refresh_bars()
+            event.stop()
+            return
         if self._mode == "search":
             if key == "escape":
                 self._search_text = ""
@@ -854,10 +886,66 @@ class LogsScreen(Screen[None]):
             view.next_match(1)
         elif char == "N":
             view.next_match(-1)
+        elif char == "v":
+            if view.start_selection():
+                self._mode = "select"
         elif key in ("enter", "escape") or char == "q":
             self.app.pop_screen()
             return
         else:
             return
         event.stop()
+        self.refresh_bars()
+
+    # ------------------------------------------------------------- sélection
+
+    def _handle_select_key(self, view: LogView, key: str, char: str | None) -> None:
+        """Toutes les touches sont absorbées : rien ne quitte l'écran par mégarde."""
+        if char == "j" or key == "down":
+            view.move_cursor(1)
+        elif char == "k" or key == "up":
+            view.move_cursor(-1)
+        elif char == "g":
+            view.cursor_to_start()
+        elif char == "G":
+            view.cursor_to_end()
+        elif char == "a":
+            view.select_all()
+        elif char == "y" or key == "enter":
+            text, count = view.selected_text()
+            view.end_selection()
+            self._mode = "normal"
+            if count:
+                self.run_worker(
+                    self._copy(text, count), group="copy", exclusive=True
+                )
+        elif key == "escape" or char in ("v", "q"):
+            view.end_selection()
+            self._mode = "normal"
+
+    async def _copy(self, text: str, count: int) -> None:
+        native = await asyncio.to_thread(clipboard.copy_native, text)
+        if not native:
+            self.app.copy_to_clipboard(text)
+        plural = "s" if count > 1 else ""
+        message = f"{count} ligne{plural} copiée{plural}"
+        if not native:
+            # OSC 52 ne renvoie rien : on ne peut affirmer que l'envoi.
+            message = f"{count} ligne{plural} envoyée{plural} au terminal (OSC 52)"
+        self._flash(message)
+
+    def _flash(self, message: str) -> None:
+        if not self.is_mounted:
+            return
+        self._flash_active = True
+        self.query_one(BottomBar).show_info(message)
+        if self._flash_timer is not None:
+            self._flash_timer.stop()
+        self._flash_timer = self.set_timer(COPY_FLASH_S, self._end_flash)
+
+    def _end_flash(self) -> None:
+        self._flash_active = False
+        if self._flash_timer is not None:
+            self._flash_timer.stop()
+            self._flash_timer = None
         self.refresh_bars()

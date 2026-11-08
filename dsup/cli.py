@@ -157,7 +157,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         gateway=gateway,
     )
     try:
-        app.run()
+        # Souris laissée au terminal : dsup se pilote entièrement au clavier,
+        # et capturer la souris n'apportait rien sinon d'empêcher de
+        # sélectionner du texte pour le copier. La molette garde un effet :
+        # sur l'écran alternatif, la plupart des terminaux la traduisent en
+        # flèches ↑/↓, qui font défiler la liste et les logs.
+        app.run(mouse=False)
     except DockerError as err:
         return _fail(str(err), err.hint or "")
     return app.return_code or 0

@@ -5,6 +5,28 @@ versionnage [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- Copie des logs : `v` ouvre une sélection de lignes dans l'écran de logs,
+  `j`/`k`/`g`/`G` l'étendent, `a` prend tout le tampon, `y` copie. Les lignes
+  arrivent entières dans le presse-papiers, ni tronquées à la largeur de
+  l'écran ni coupées par le wrap. Copie par `pbcopy`, `wl-copy`, `xclip` ou
+  `xsel`, avec repli sur OSC 52 quand aucun ne convient (dsup lancé dans une
+  session SSH).
+
+### Modifié
+
+- La souris n'est plus capturée : la sélection du terminal fonctionne de
+  nouveau, et la molette fait défiler via les flèches sur la plupart des
+  terminaux. dsup ne se servait pas de la souris.
+- Barre de l'écran de logs : `j/k` et `g/G` regroupés pour faire place à
+  `v copier` sur 80 colonnes.
+
+### Corrigé
+
+- Logs en pause (suivi coupé) : la vue glissait toute seule dès que le tampon
+  plein évinçait ses lignes les plus anciennes.
+
 ## [0.1.1] — 2026-08-15
 
 Version de documentation : le code n'est pas modifié.

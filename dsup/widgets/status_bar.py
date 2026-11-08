@@ -83,6 +83,10 @@ class BottomBar(Widget):
             left.append((f" — {hint}", theme.TEXT))
         self.set_content(left, (), overlay=theme.CONFIRM_BAR)
 
+    def show_info(self, message: str) -> None:
+        """Bandeau neutre de confirmation (copie faite…), sans alerte."""
+        self.set_content([("✓ ", theme.S_BOLD), (message, theme.TEXT)])
+
     def show_prompt(
         self, prefix: str, value: str, right: Sequence[Piece] = ()
     ) -> None:

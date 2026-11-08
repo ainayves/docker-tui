@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
+import pytest
 from conftest import FakeGateway, make_container
 
+from dsup import clipboard
 from dsup.app import DsupApp, LogsScreen, MainScreen
 from dsup.docker import ContainerInfo, ContainerState, DaemonUnreachable, DockerGateway
 from dsup.widgets.container_table import ContainerTable
@@ -160,3 +163,93 @@ async def test_selection_stable_quand_un_conteneur_disparait() -> None:
         table = app.screen.query_one(ContainerTable)
         selected = table.selected
         assert selected is not None and selected.name == "batch"
+
+
+async def _ecran_logs(pilot: Any, app: DsupApp, nombre: int) -> LogsScreen:
+    await wait_for(lambda: len(app.containers) == 3)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+    screen = app.screen
+    assert isinstance(screen, LogsScreen)
+    await wait_for(lambda: len(screen._buffer) == nombre)
+    await pilot.pause()
+    return screen
+
+
+def _capture(copies: list[str]) -> Callable[[str], bool]:
+    """Remplace l'outil natif : garde le texte, annonce une copie réussie."""
+
+    def copie(text: str) -> bool:
+        copies.append(text)
+        return True
+
+    return copie
+
+
+def _gateway_bavard() -> FakeGateway:
+    gateway = FakeGateway(containers=fleet())
+    gateway.log_lines["1" * 64] = [
+        b"2026-08-07T10:41:51.000000000Z boot\n",
+        b"2026-08-07T10:41:52.000000000Z GET /health 200 1ms\n",
+        b"2026-08-07T10:41:53.000000000Z WARN retry upstream\n",
+    ]
+    return gateway
+
+
+async def test_logs_copie_des_lignes_selectionnees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copies: list[str] = []
+    monkeypatch.setattr(clipboard, "copy_native", _capture(copies))
+    app = build_app(_gateway_bavard())
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _ecran_logs(pilot, app, 3)
+        await pilot.press("v", "k", "y")
+        await wait_for(lambda: bool(copies))
+        assert copies == [
+            "10:41:52 GET /health 200 1ms\n10:41:53 WARN retry upstream"
+        ]
+        assert screen._mode == "normal"
+        assert isinstance(app.screen, LogsScreen)  # y n'a pas quitté l'écran
+
+
+async def test_logs_copie_tout_le_tampon(monkeypatch: pytest.MonkeyPatch) -> None:
+    copies: list[str] = []
+    monkeypatch.setattr(clipboard, "copy_native", _capture(copies))
+    app = build_app(_gateway_bavard())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _ecran_logs(pilot, app, 3)
+        await pilot.press("v", "a", "enter")
+        await wait_for(lambda: bool(copies))
+        assert copies[0].splitlines()[0] == "10:41:51 boot"
+        assert len(copies[0].splitlines()) == 3
+
+
+async def test_logs_repli_osc52_sans_outil_natif(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(clipboard, "copy_native", lambda text: False)
+    app = build_app(_gateway_bavard())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _ecran_logs(pilot, app, 3)
+        await pilot.press("v", "y")
+        await wait_for(lambda: app.clipboard == "10:41:53 WARN retry upstream")
+
+
+async def test_logs_echap_annule_la_selection_sans_quitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copies: list[str] = []
+    monkeypatch.setattr(clipboard, "copy_native", _capture(copies))
+    app = build_app(_gateway_bavard())
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _ecran_logs(pilot, app, 3)
+        await pilot.press("v", "escape")
+        await pilot.pause()
+        assert screen._mode == "normal"
+        assert isinstance(app.screen, LogsScreen)
+        assert copies == []
+        await pilot.press("escape")  # hors sélection, Échap ramène à la liste
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)

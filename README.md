@@ -190,8 +190,8 @@ dsup prod-eu-1 --remote-socket /run/user/1000/docker.sock
 | `↵` | logs for the selected container | | `n` / `N` | next / previous match |
 | `S` | start *(no confirmation)* | | `f` | toggle live follow |
 | `r` | restart *(no confirmation)* | | `w` | toggle line wrapping |
-| `s` | stop — `y` confirms | | `↵` / `q` | back |
-| `x` | kill — `y` confirms | | | |
+| `s` | stop — `y` confirms | | `v` | select lines to copy |
+| `x` | kill — `y` confirms | | `↵` / `q` | back |
 | `d` | rm — `y` confirms | | | |
 | `R` | refresh / retry now | | | |
 | `?` | show secondary keys | | | |
@@ -201,6 +201,18 @@ Destructive actions (`s`, `x`, `d`) show an inverted red banner: `y` confirms,
 any other key cancels. Scrolling up in the logs stops the follow; `G` or `f`
 resume it.
 
+### Copying logs
+
+`v` in the logs screen starts a line selection on the last visible line — or on
+the current match after a search. `j`/`k` extend it, `g`/`G` reach the start
+or end of the buffer, `a` takes the whole buffer, `y` or `↵` copies, `Esc`
+cancels. Lines are copied whole: not cut at the screen width, not split by
+wrapping, and beyond what fits on screen. Follow mode resumes afterwards if it
+was on.
+
+The mouse is left to the terminal, so selecting on screen and copying the usual
+way works too — limited to what is displayed.
+
 ## Behavior worth knowing
 
 - The list appears immediately; CPU and memory fill in as readings arrive (the
@@ -209,6 +221,11 @@ resume it.
   5s on its own (`R` forces an attempt).
 - The log buffer is capped at 2,000 lines, so a very chatty container cannot
   exhaust memory.
+- Copies go to the system clipboard through `pbcopy`, `wl-copy`, `xclip` or
+  `xsel`. Without one of them — typically when `dsup` itself runs inside an SSH
+  session — they fall back to OSC 52, which depends on the terminal: iTerm2
+  requires *Applications in terminal may access clipboard*, Terminal.app does
+  not support it.
 - `Ctrl-C` and `SIGTERM` restore the terminal cleanly.
 
 ## Development

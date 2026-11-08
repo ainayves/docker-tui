@@ -38,8 +38,8 @@ class _AppFactice:
         self.capture.update(kwargs)
         return self
 
-    def run(self) -> None:
-        return None
+    def run(self, **kwargs: Any) -> None:
+        self.capture["run"] = kwargs
 
     return_code = 0
 
@@ -223,6 +223,15 @@ def test_connexion_ouverte_avant_l_interface(
 
     assert main([]) == 0
     assert capture["gateway"] is passerelle
+
+
+def test_souris_laissee_au_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sans capture de la souris, le terminal sait encore sélectionner du texte."""
+    monkeypatch.setattr("dsup.cli.connect", lambda: FakeGateway())
+    capture = _sans_interface(monkeypatch)
+
+    assert main([]) == 0
+    assert capture["run"] == {"mouse": False}
 
 
 def test_daemon_absent_reste_non_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
