@@ -225,13 +225,13 @@ def test_connexion_ouverte_avant_l_interface(
     assert capture["gateway"] is passerelle
 
 
-def test_souris_laissee_au_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sans capture de la souris, le terminal sait encore sélectionner du texte."""
+def test_souris_capturee(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Souris libérée, la molette deviendrait des flèches qui déplacent la sélection."""
     monkeypatch.setattr("dsup.cli.connect", lambda: FakeGateway())
     capture = _sans_interface(monkeypatch)
 
     assert main([]) == 0
-    assert capture["run"] == {"mouse": False}
+    assert capture["run"].get("mouse", True) is True
 
 
 def test_daemon_absent_reste_non_fatal(monkeypatch: pytest.MonkeyPatch) -> None:

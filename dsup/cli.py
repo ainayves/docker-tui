@@ -157,12 +157,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         gateway=gateway,
     )
     try:
-        # Souris laissée au terminal : dsup se pilote entièrement au clavier,
-        # et capturer la souris n'apportait rien sinon d'empêcher de
-        # sélectionner du texte pour le copier. La molette garde un effet :
-        # sur l'écran alternatif, la plupart des terminaux la traduisent en
-        # flèches ↑/↓, qui font défiler la liste et les logs.
-        app.run(mouse=False)
+        # La souris reste capturée. Laissée au terminal, elle semblait rendre
+        # la sélection native, mais sur l'écran alternatif bien des terminaux
+        # (dont xterm.js, celui de VS Code) changent alors la molette et les
+        # gestes du trackpad en flèches ↑/↓ : la sélection en cours s'efface,
+        # et dsup déplace son curseur — sur la liste, un `r` frappé ensuite
+        # viserait un autre conteneur. La sélection pour copier est donc faite
+        # par dsup lui-même, dans l'écran de logs.
+        app.run()
     except DockerError as err:
         return _fail(str(err), err.hint or "")
     return app.return_code or 0

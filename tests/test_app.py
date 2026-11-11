@@ -13,6 +13,7 @@ from dsup import clipboard
 from dsup.app import DsupApp, LogsScreen, MainScreen
 from dsup.docker import ContainerInfo, ContainerState, DaemonUnreachable, DockerGateway
 from dsup.widgets.container_table import ContainerTable
+from dsup.widgets.log_view import LogView
 
 
 def fleet() -> list[ContainerInfo]:
@@ -253,3 +254,21 @@ async def test_logs_echap_annule_la_selection_sans_quitter(
         await pilot.press("escape")  # hors sélection, Échap ramène à la liste
         await pilot.pause()
         assert isinstance(app.screen, MainScreen)
+
+
+async def test_logs_glisser_a_la_souris_copie_au_relachement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copies: list[str] = []
+    monkeypatch.setattr(clipboard, "copy_native", _capture(copies))
+    app = build_app(_gateway_bavard())
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _ecran_logs(pilot, app, 3)
+        view = screen.query_one(LogView)
+        # « 10:41:52 GET /health… » : de « GET » (col. 9) à « /health » inclus.
+        await pilot.mouse_down(view, offset=(9, 1))
+        await pilot.hover(view, offset=(19, 1))
+        await pilot.mouse_up(view, offset=(19, 1))
+        await wait_for(lambda: bool(copies))
+        assert copies == ["GET /health"]
+        assert isinstance(app.screen, LogsScreen)

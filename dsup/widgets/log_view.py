@@ -9,7 +9,10 @@ from collections import deque
 from typing import NamedTuple
 
 from rich.style import Style
+from textual import events
+from textual.message import Message
 from textual.strip import Strip
+from textual.timer import Timer
 from textual.widget import Widget
 
 from dsup import theme
@@ -19,11 +22,17 @@ LEVEL_NORMAL = 0
 LEVEL_WARN = 1
 LEVEL_ERROR = 2
 
+WHEEL_ROWS = 3
+DRAG_SCROLL_S = 0.05
+
 _TS_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})\S*)\s")
 _WARN_RE = re.compile(r"(?i)\bwarn(ing)?\b")
 _ERROR_RE = re.compile(r"(?i)\b(error|err|fatal|panic|critical)\b|\s5\d{2}\s")
 
 _LEVEL_STYLES: tuple[Style, ...] = (theme.TEXT, theme.S_ORANGE, theme.S_RED)
+
+# Position dans le tampon : (numéro absolu de ligne, colonne dans le texte affiché).
+Position = tuple[int, int]
 
 
 class LogLine(NamedTuple):
@@ -97,12 +106,29 @@ class LogBuffer:
 class LogView(Widget):
     """Affiche un LogBuffer ; défiler vers le haut coupe le suivi, G/f le reprennent.
 
-    Le mode sélection (`start_selection`) délimite des lignes entières entre
-    une ancre et un curseur, repérés par numéro absolu : la sélection reste
-    sur le même texte quand de nouvelles lignes évincent les plus anciennes.
+    Deux façons de sélectionner, un seul état : au clavier (`start_selection`),
+    des lignes entières entre une ancre et un curseur ; à la souris, un
+    glisser au caractère près, copié au relâchement (message `Selected`).
+    Ancre et curseur sont repérés par numéro absolu : la sélection reste sur
+    le même texte quand de nouvelles lignes évincent les plus anciennes.
+    L'affichage est figé tant qu'elle dure.
     """
 
     DEFAULT_CSS = "LogView { width: 1fr; height: 1fr; }"
+    # La sélection de Textual ne sait rien de ce rendu ligne à ligne : la
+    # nôtre la remplace.
+    ALLOW_SELECT = False
+
+    class Selected(Message):
+        """Glisser terminé : texte à copier, nombre de lignes touchées."""
+
+        def __init__(self, text: str, lines: int) -> None:
+            super().__init__()
+            self.text = text
+            self.lines = lines
+
+    class Changed(Message):
+        """Suivi ou sélection modifiés à la souris : les barres sont à revoir."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -117,9 +143,15 @@ class LogView(Widget):
         self._first = 0
         self._lines: tuple[LogLine, ...] = ()
         self._vrows: list[tuple[int, int, int]] = []
-        self._anchor: int | None = None
-        self._cursor = 0
+        self._anchor: Position | None = None
+        self._cursor: Position = (0, 0)
+        self._linewise = True
+        self._frozen = False
         self._follow_before = False
+        self._press: Position | None = None
+        self._drag_x = 0
+        self._drag_dir = 0
+        self._drag_timer: Timer | None = None
 
     # ------------------------------------------------------------- API écran
 
@@ -191,7 +223,7 @@ class LogView(Widget):
         self._center_on(self._matches[self._match_pos])
         self.refresh()
 
-    # ------------------------------------------------------------ sélection
+    # ------------------------------------------------- sélection au clavier
 
     @property
     def selecting(self) -> bool:
@@ -199,15 +231,16 @@ class LogView(Widget):
 
     @property
     def selection_size(self) -> int:
-        bounds = self._selection_bounds()
-        return 0 if bounds is None else bounds[1] - bounds[0] + 1
+        span = self._selection_span()
+        return 0 if span is None else span[2] - span[0] + 1
 
     def start_selection(self) -> bool:
-        """Entre en sélection, curseur sur le résultat courant ou la dernière
+        """Sélection de lignes, curseur sur le résultat courant ou la dernière
         ligne visible ; fige l'affichage. False si le tampon est vide."""
         rows = self._rows()
         if not rows:
             return False
+        self.end_selection()
         offset = self._current_offset(rows)
         height = max(1, self.size.height)
         top_line = rows[offset][0]
@@ -217,67 +250,188 @@ class LogView(Widget):
             match_line = self._matches[self._match_pos]
             if top_line <= match_line <= bottom_line:
                 line = match_line
-        self._follow_before = self.follow
-        self.follow = False
-        self._offset = offset
-        self._anchor = self._cursor = self._first + line
+        self._freeze()
+        self._linewise = True
+        self._anchor = self._cursor = (self._first + line, 0)
         self.refresh()
         return True
 
     def move_cursor(self, delta: int) -> None:
         self._rows()
-        self._set_cursor(self._cursor + delta)
+        self._set_cursor_line(self._cursor[0] + delta)
 
     def cursor_to_start(self) -> None:
         self._rows()
-        self._set_cursor(self._first)
+        self._set_cursor_line(self._first)
 
     def cursor_to_end(self) -> None:
         self._rows()
-        self._set_cursor(self._first + len(self._lines) - 1)
+        self._set_cursor_line(self._first + len(self._lines) - 1)
 
     def select_all(self) -> None:
         self._rows()
         if self._anchor is None or not self._lines:
             return
-        self._anchor = self._first
-        self._set_cursor(self._first + len(self._lines) - 1)
+        self._linewise = True
+        self._anchor = (self._first, 0)
+        self._set_cursor_line(self._first + len(self._lines) - 1)
 
     def selected_text(self) -> tuple[str, int]:
-        """Lignes sélectionnées, entières et telles qu'affichées (wrap ou non)."""
+        """Texte sélectionné tel qu'affiché, lignes entières quel que soit le
+        wrap ou la largeur ; et le nombre de lignes touchées."""
         self._rows()
-        bounds = self._selection_bounds()
-        if bounds is None:
+        span = self._selection_span()
+        if span is None:
             return "", 0
-        low, high = bounds
-        chosen = self._lines[low : high + 1]
-        return "\n".join(_display(line) for line in chosen), len(chosen)
+        low, low_col, high, high_col = span
+        parts: list[str] = []
+        for index in range(low, high + 1):
+            text = _display(self._lines[index])
+            start = low_col if index == low else 0
+            end = high_col if index == high else len(text)
+            parts.append(text[start:end])
+        return "\n".join(parts), high - low + 1
 
     def end_selection(self) -> None:
         """Quitte la sélection et rend le suivi s'il était actif avant."""
-        if self._anchor is None:
+        if self._anchor is None and not self._frozen:
             return
         self._anchor = None
-        self.follow = self._follow_before
+        if self._frozen:
+            self.follow = self._follow_before
+            self._frozen = False
         self.refresh()
 
-    def _set_cursor(self, absolute: int) -> None:
+    def _freeze(self) -> None:
+        """Fige l'affichage à sa position courante, suivi mis de côté."""
+        if self._frozen:
+            return
+        rows = self._rows()
+        self._follow_before = self.follow
+        self._offset = self._current_offset(rows)
+        self.follow = False
+        self._frozen = True
+
+    def _set_cursor_line(self, absolute: int) -> None:
         if self._anchor is None or not self._lines:
             return
         last = self._first + len(self._lines) - 1
-        self._cursor = max(self._first, min(absolute, last))
-        self._ensure_visible(self._cursor - self._first)
+        line = max(self._first, min(absolute, last))
+        self._cursor = (line, self._cursor[1])
+        self._ensure_visible(line - self._first)
         self.refresh()
 
-    def _selection_bounds(self) -> tuple[int, int] | None:
-        """Indices (dans self._lines) de la sélection ; None si vide ou évincée."""
+    def _selection_span(self) -> tuple[int, int, int, int] | None:
+        """(ligne, colonne) de début et de fin exclusive, en indices de
+        self._lines ; None si rien n'est sélectionné ou si tout est évincé."""
         if self._anchor is None or not self._lines:
             return None
-        low = min(self._anchor, self._cursor) - self._first
-        high = max(self._anchor, self._cursor) - self._first
+        start, end = sorted((self._anchor, self._cursor))
+        low, low_col = start[0] - self._first, start[1]
+        high, high_col = end[0] - self._first, end[1] + 1
         if high < 0:
             return None
-        return max(0, low), min(high, len(self._lines) - 1)
+        if low < 0:
+            low, low_col = 0, 0
+        high = min(high, len(self._lines) - 1)
+        high_len = len(_display(self._lines[high]))
+        if self._linewise:
+            low_col, high_col = 0, high_len
+        return low, low_col, high, min(high_col, high_len)
+
+    # ---------------------------------------------------------------- souris
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        if event.button != 1:
+            return
+        position = self._position_at(event.x, event.y)
+        if position is None:
+            return
+        self.end_selection()
+        self._freeze()
+        self._press = position
+        self._drag_x = event.x
+        self.capture_mouse()
+        event.stop()
+        self.post_message(self.Changed())
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if self._press is None:
+            return
+        height = max(1, self.size.height)
+        self._drag_x = event.x
+        # Hors du panneau, le défilement continue tant que la souris y reste.
+        self._drag_dir = -1 if event.y < 0 else 1 if event.y >= height else 0
+        if self._drag_dir and self._drag_timer is None:
+            self._drag_timer = self.set_interval(DRAG_SCROLL_S, self._drag_scroll)
+        elif not self._drag_dir:
+            self._stop_drag_timer()
+        self._drag_to(event.x, max(0, min(event.y, height - 1)))
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._press is None:
+            return
+        self._press = None
+        self._stop_drag_timer()
+        self.release_mouse()
+        text, lines = self.selected_text()
+        self.end_selection()
+        event.stop()
+        if lines:
+            self.post_message(self.Selected(text, lines))
+        self.post_message(self.Changed())
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self.scroll_by(-WHEEL_ROWS)
+        event.stop()
+        self.post_message(self.Changed())
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self.scroll_by(WHEEL_ROWS)
+        event.stop()
+        self.post_message(self.Changed())
+
+    def _drag_to(self, x: int, y: int) -> None:
+        position = self._position_at(x, y)
+        if position is None or self._press is None:
+            return
+        if self._anchor is None:
+            if position == self._press:
+                return  # simple clic : rien à sélectionner
+            self._linewise = False
+            self._anchor = self._press
+        if position != self._cursor:
+            self._cursor = position
+            self.refresh()
+            self.post_message(self.Changed())
+
+    def _drag_scroll(self) -> None:
+        if self._press is None or not self._drag_dir:
+            self._stop_drag_timer()
+            return
+        self.scroll_by(self._drag_dir)
+        edge = 0 if self._drag_dir < 0 else max(1, self.size.height) - 1
+        self._drag_to(self._drag_x, edge)
+
+    def _stop_drag_timer(self) -> None:
+        self._drag_dir = 0
+        if self._drag_timer is not None:
+            self._drag_timer.stop()
+            self._drag_timer = None
+
+    def _position_at(self, x: int, y: int) -> Position | None:
+        """Caractère sous la souris ; au-delà du texte, la fin de la ligne."""
+        rows = self._rows()
+        if not rows:
+            return None
+        index = self._current_offset(rows) + y
+        if index >= len(rows):
+            last = len(self._lines) - 1
+            return self._first + last, len(_display(self._lines[last]))
+        line_index, start, _ = rows[max(0, index)]
+        length = len(_display(self._lines[line_index]))
+        return self._first + line_index, min(start + max(0, x), length)
 
     # ---------------------------------------------------------------- rendu
 
@@ -288,13 +442,28 @@ class LogView(Widget):
         if index >= len(rows):
             return strip_from([("~", theme.S_DIM)], width)
         line_index, start, end = rows[index]
-        bounds = self._selection_bounds()
-        selected = bounds is not None and bounds[0] <= line_index <= bounds[1]
-        is_cursor = selected and self._first + line_index == self._cursor
+        selected: tuple[int, int] | None = None
+        pad = False
+        span = self._selection_span()
+        if span is not None and span[0] <= line_index <= span[2]:
+            low, low_col, high, high_col = span
+            length = len(_display(self._lines[line_index]))
+            selected = (
+                low_col if line_index == low else 0,
+                high_col if line_index == high else length,
+            )
+            # Le blanc après le texte figure le saut de ligne : inversé s'il
+            # fait partie de la sélection.
+            pad = end >= length and (self._linewise or line_index < high)
+        is_cursor = (
+            selected is not None
+            and self._linewise
+            and self._first + line_index == self._cursor[0]
+        )
         return strip_from(
             self._slice_pieces(line_index, start, end, selected, is_cursor),
             width,
-            pad_style=theme.REVERSE if selected else None,
+            pad_style=theme.REVERSE if pad else None,
         )
 
     def _current_offset(self, rows: list[tuple[int, int, int]]) -> int:
@@ -338,7 +507,7 @@ class LogView(Widget):
         line_index: int,
         start: int,
         end: int,
-        selected: bool = False,
+        selected: tuple[int, int] | None = None,
         is_cursor: bool = False,
     ) -> list[Piece]:
         line = self._lines[line_index]
@@ -347,7 +516,7 @@ class LogView(Widget):
         level_style = _LEVEL_STYLES[line.level]
         highlights = self._match_ranges(display) if self._query else []
         boundaries = {start, end, min(max(prefix, start), end)}
-        for a, b in highlights:
+        for a, b in [*highlights, *([selected] if selected else [])]:
             if a < end and b > start:
                 boundaries.add(max(a, start))
                 boundaries.add(min(b, end))
@@ -360,9 +529,10 @@ class LogView(Widget):
             if is_cursor:
                 style = style + theme.S_BOLD
             highlighted = any(ha <= a and b <= hb for ha, hb in highlights)
+            in_selection = selected is not None and selected[0] <= a and b <= selected[1]
             # Vidéo inversée en « ou exclusif » : un résultat de recherche
             # reste repérable à l'intérieur d'une sélection, elle-même inversée.
-            if highlighted != selected:
+            if highlighted != in_selection:
                 style = style + theme.REVERSE
             pieces.append((display[a:b], style))
         return pieces or [("", theme.TEXT)]

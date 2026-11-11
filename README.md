@@ -210,8 +210,17 @@ cancels. Lines are copied whole: not cut at the screen width, not split by
 wrapping, and beyond what fits on screen. Follow mode resumes afterwards if it
 was on.
 
-The mouse is left to the terminal, so selecting on screen and copying the usual
-way works too — limited to what is displayed.
+With the mouse, drag across the logs to select text, down to the character; it
+is copied as soon as you release the button. Dragging past the top or bottom
+edge keeps scrolling, and the wheel scrolls the logs.
+
+`dsup` handles the mouse itself rather than leaving it to the terminal: on the
+alternate screen, many terminals — VS Code's among them — turn the wheel and
+trackpad gestures into arrow keys, which would erase the selection and move the
+cursor in the container list. To use your terminal's own selection anyway, hold
+the modifier it provides: Option in iTerm2, Shift in most Linux terminals; in
+VS Code on macOS, enable `terminal.integrated.macOptionClickForcesSelection`
+and hold Option.
 
 ## Behavior worth knowing
 

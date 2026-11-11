@@ -735,12 +735,12 @@ class MainScreen(Screen[None]):
 
 
 class LogsScreen(Screen[None]):
-    """Sous-écran logs : suivi temps réel, recherche, wrap, copie de lignes.
+    """Sous-écran logs : suivi temps réel, recherche, wrap, copie.
 
-    La copie passe par un mode sélection au clavier (`v`) plutôt que par la
-    souris : une sélection du terminal ne prendrait que l'écran visible, et
-    des lignes tronquées quand le wrap est coupé. Ici les lignes copiées sont
-    entières, sur tout le tampon.
+    La sélection est faite par dsup lui-même, au clavier (`v`) ou en glissant
+    la souris, jamais par le terminal : celui-ci ne verrait que l'écran
+    visible, avec des lignes tronquées quand le wrap est coupé, et dsup garde
+    la souris pour que la molette ne se change pas en flèches (voir cli.main).
     """
 
     def __init__(self, info: ContainerInfo) -> None:
@@ -748,7 +748,7 @@ class LogsScreen(Screen[None]):
         self._info = info
         self._buffer = LogBuffer(2000)
         self._streamer: LogStreamer | None = None
-        self._mode: Literal["normal", "search", "select"] = "normal"
+        self._mode: Literal["normal", "search"] = "normal"
         self._search_text = ""
         self._note: str | None = None
         self._flash_active = False
@@ -815,7 +815,7 @@ class LogsScreen(Screen[None]):
         if self._flash_active:
             return
         bar = self.query_one(BottomBar)
-        if self._mode == "select":
+        if view.selecting:
             size = view.selection_size
             bar.show_keys(
                 _SELECT_KEYS,
@@ -847,7 +847,7 @@ class LogsScreen(Screen[None]):
         key = event.key
         if self._flash_active:
             self._end_flash()
-        if self._mode == "select":
+        if view.selecting:
             self._handle_select_key(view, key, char)
             self.refresh_bars()
             event.stop()
@@ -887,8 +887,7 @@ class LogsScreen(Screen[None]):
         elif char == "N":
             view.next_match(-1)
         elif char == "v":
-            if view.start_selection():
-                self._mode = "select"
+            view.start_selection()
         elif key in ("enter", "escape") or char == "q":
             self.app.pop_screen()
             return
@@ -912,26 +911,43 @@ class LogsScreen(Screen[None]):
         elif char == "a":
             view.select_all()
         elif char == "y" or key == "enter":
-            text, count = view.selected_text()
+            text, lines = view.selected_text()
             view.end_selection()
-            self._mode = "normal"
-            if count:
-                self.run_worker(
-                    self._copy(text, count), group="copy", exclusive=True
-                )
+            if lines:
+                self._start_copy(text, lines, whole_lines=True)
         elif key == "escape" or char in ("v", "q"):
             view.end_selection()
-            self._mode = "normal"
 
-    async def _copy(self, text: str, count: int) -> None:
+    def on_log_view_selected(self, message: LogView.Selected) -> None:
+        """Glisser à la souris terminé : copié dès le relâchement."""
+        self._start_copy(message.text, message.lines, whole_lines=False)
+
+    def on_log_view_changed(self, message: LogView.Changed) -> None:
+        if self._flash_active and self.query_one(LogView).selecting:
+            self._end_flash()
+        else:
+            self.refresh_bars()
+
+    def _start_copy(self, text: str, lines: int, *, whole_lines: bool) -> None:
+        self.run_worker(
+            self._copy(text, lines, whole_lines), group="copy", exclusive=True
+        )
+
+    async def _copy(self, text: str, lines: int, whole_lines: bool) -> None:
         native = await asyncio.to_thread(clipboard.copy_native, text)
         if not native:
             self.app.copy_to_clipboard(text)
+        if whole_lines or lines > 1:
+            count, unit = lines, "ligne"
+            done = "copiée" if native else "envoyée"
+        else:
+            count, unit = len(text), "caractère"
+            done = "copié" if native else "envoyé"
         plural = "s" if count > 1 else ""
-        message = f"{count} ligne{plural} copiée{plural}"
+        message = f"{count} {unit}{plural} {done}{plural}"
         if not native:
             # OSC 52 ne renvoie rien : on ne peut affirmer que l'envoi.
-            message = f"{count} ligne{plural} envoyée{plural} au terminal (OSC 52)"
+            message += " au terminal (OSC 52)"
         self._flash(message)
 
     def _flash(self, message: str) -> None:

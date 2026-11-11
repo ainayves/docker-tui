@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+
+from textual import events
 from textual.app import App, ComposeResult
 
 from dsup.widgets.log_view import LogBuffer, LogView
+from dsup.widgets.status_bar import BottomBar
 
 
 def lignes(*textes: str) -> bytes:
@@ -12,17 +16,22 @@ def lignes(*textes: str) -> bytes:
 
 
 class _Banc(App[None]):
-    """Une LogView seule, à la taille de l'écran de test."""
+    """Une LogView sur une barre d'une ligne, où l'on peut glisser hors du panneau."""
 
     def __init__(self, buffer: LogBuffer) -> None:
         super().__init__()
         self.buffer = buffer
+        self.copies: list[tuple[str, int]] = []
 
     def compose(self) -> ComposeResult:
         yield LogView()
+        yield BottomBar()
 
     def on_mount(self) -> None:
         self.query_one(LogView).attach(self.buffer)
+
+    def on_log_view_selected(self, message: LogView.Selected) -> None:
+        self.copies.append((message.text, message.lines))
 
 
 # ------------------------------------------------------------------ tampon
@@ -143,3 +152,83 @@ async def test_selection_evincee_ne_copie_rien() -> None:
         view.on_new_lines()
         await pilot.pause()
         assert view.selected_text() == ("", 0)
+
+
+# ------------------------------------------------------------------ souris
+
+
+async def test_glisser_sur_une_ligne_copie_au_caractere_pres() -> None:
+    buffer = LogBuffer()
+    buffer.feed(lignes("alpha beta", "gamma delta"))
+    app = _Banc(buffer)
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.mouse_down(LogView, offset=(6, 0))
+        await pilot.hover(LogView, offset=(9, 0))
+        await pilot.mouse_up(LogView, offset=(9, 0))
+        assert app.copies == [("beta", 1)]
+        view = app.query_one(LogView)
+        assert not view.selecting and view.follow  # le suivi reprend
+
+
+async def test_glisser_sur_plusieurs_lignes() -> None:
+    buffer = LogBuffer()
+    buffer.feed(lignes("alpha beta", "gamma delta", "epsilon"))
+    app = _Banc(buffer)
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.mouse_down(LogView, offset=(6, 0))
+        await pilot.hover(LogView, offset=(4, 1))
+        await pilot.mouse_up(LogView, offset=(4, 1))
+        assert app.copies == [("beta\ngamma", 2)]
+
+
+async def test_glisser_vers_le_haut_et_au_dela_du_texte() -> None:
+    buffer = LogBuffer()
+    buffer.feed(lignes("alpha beta", "gamma"))
+    app = _Banc(buffer)
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.mouse_down(LogView, offset=(30, 1))  # après « gamma »
+        await pilot.hover(LogView, offset=(6, 0))
+        await pilot.mouse_up(LogView, offset=(6, 0))
+        assert app.copies == [("beta\ngamma", 2)]
+
+
+async def test_simple_clic_ne_copie_rien() -> None:
+    buffer = LogBuffer()
+    buffer.feed(lignes("alpha"))
+    app = _Banc(buffer)
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.click(LogView, offset=(2, 0))
+        view = app.query_one(LogView)
+        assert app.copies == []
+        assert view.follow and not view.selecting
+
+
+async def test_glisser_hors_du_panneau_fait_defiler() -> None:
+    buffer = LogBuffer()
+    buffer.feed(lignes(*(f"l{i:02d}" for i in range(40))))
+    app = _Banc(buffer)
+    async with app.run_test(size=(40, 6)) as pilot:  # 5 lignes visibles
+        view = app.query_one(LogView)
+        view.goto_top()
+        await pilot.mouse_down(LogView, offset=(0, 0))
+        await pilot.hover(LogView, offset=(0, 5))  # sur la barre, sous le panneau
+        await asyncio.sleep(0.4)
+        await pilot.mouse_up(LogView, offset=(0, 5))
+        (text, count), = app.copies
+        assert text.startswith("l00\nl01")
+        assert count > 5
+
+
+async def test_molette_fait_defiler_et_coupe_le_suivi() -> None:
+    buffer = LogBuffer()
+    buffer.feed(lignes(*(f"l{i:02d}" for i in range(40))))
+    app = _Banc(buffer)
+    async with app.run_test(size=(40, 6)) as pilot:
+        view = app.query_one(LogView)
+        assert view.render_line(4).text.startswith("l39")
+        app.screen._forward_event(
+            events.MouseScrollUp(None, 1, 1, 0, 0, 0, False, False, False, 1, 1)
+        )
+        await pilot.pause()
+        assert not view.follow
+        assert view.render_line(4).text.startswith("l36")
